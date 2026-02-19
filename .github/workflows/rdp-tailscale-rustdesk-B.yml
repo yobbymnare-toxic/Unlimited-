@@ -7,7 +7,7 @@ on:
       ts_api_key:         { description: "Tailscale API key (device admin, no Bearer)", required: true }
       ts_authkey:         { description: "Tailscale Auth key (reusable or ephemeral)", required: true }
       quick_test:         { description: "Run 5-minute test", type: boolean, default: false }
-      runtime_minutes:    { description: "Runtime (max 360; default 355 when not test)", required: false, default: "355" }
+      runtime_minutes:    { description: "Runtime (max 350; default 350 when not test)", required: false, default: "350" }
       do_purge:           { description: "Purge bullet* devices at start (single instance only)", required: false, default: "true" }
       stop_flag:          { description: "Set to 'true' to stop after this run (do not chain)", required: false, default: "false" }
       rdp_count:          { description: "How many RDP instances (1-10) [ignored if CRD provided]", required: false, default: "1" }
@@ -60,7 +60,9 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       max-parallel: 10
-    timeout-minutes: 370
+    # GitHub Actions hard limit: 360 minutes for public repos
+    # Set to 360 to allow full runtime + buffer for dispatch
+    timeout-minutes: 360
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
@@ -164,10 +166,11 @@ jobs:
           $hn = "bullet${{ matrix.id }}"
           "TS_HOSTNAME=$hn" | Out-File -Append $env:GITHUB_ENV
           $runtime = if (Yes("${{ inputs.quick_test }}")) { 5 } else { [int]"${{ inputs.runtime_minutes }}" }
-          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 355 }
-          if ($runtime -gt 360) { $runtime = 355 }
+          # Max runtime: 350 minutes (leaves 10 min buffer for dispatch/cleanup)
+          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 350 }
+          if ($runtime -gt 350) { $runtime = 350 }
           "RUNTIME_MINUTES=$runtime" | Out-File -Append $env:GITHUB_ENV
-          Write-Host "Hostname: $hn  | Runtime: $runtime"
+          Write-Host "Hostname: $hn  | Runtime: $runtime minutes (max 350)"
 
       - name: Purge bullet* devices (single-instance only)
         if: ${{ needs.setup.outputs.multi == '0' }}
@@ -289,7 +292,7 @@ jobs:
           }
 
       # -----------------------------------------------------------------------
-      # INFINITE CHAIN: B -> A -> B -> A -> ... forever
+      # INFINITE CHAIN: B -> A -> B -> A -> ... forever (24/7 unlimited)
       # Set stop_flag=true at dispatch time to break the chain cleanly.
       # -----------------------------------------------------------------------
       - name: Dispatch Workflow A (infinite chain) or stop
@@ -321,4 +324,4 @@ jobs:
           $hdr = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
           $body = @{ ref="${{ github.ref_name }}"; inputs=$payload } | ConvertTo-Json -Depth 20
           Invoke-WebRequest -Method POST -Uri $url -Headers $hdr -Body $body | Out-Null
-          Write-Host "Dispatched Workflow A — chain continues 24/7."
+          Write-Host "Dispatched Workflow A — chain continues 24/7 unlimited."
