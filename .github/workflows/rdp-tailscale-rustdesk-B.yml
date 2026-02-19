@@ -7,7 +7,7 @@ on:
       ts_api_key:         { description: "Tailscale API key (device admin, no Bearer)", required: true }
       ts_authkey:         { description: "Tailscale Auth key (reusable or ephemeral)", required: true }
       quick_test:         { description: "Run 5-minute test", type: boolean, default: false }
-      runtime_minutes:    { description: "Runtime (max 4300; default 4300 when not test)", required: false, default: "4300" }
+      runtime_minutes:    { description: "Runtime (max 360; default 355 when not test)", required: false, default: "355" }
       do_purge:           { description: "Purge bullet* devices at start (single instance only)", required: false, default: "true" }
       stop_flag:          { description: "Set to 'true' to stop after this run (do not chain)", required: false, default: "false" }
       rdp_count:          { description: "How many RDP instances (1-10) [ignored if CRD provided]", required: false, default: "1" }
@@ -60,9 +60,7 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       max-parallel: 10
-    # Private repo: 72 hours = 4320 minutes max
-    # Set to 4320 for maximum runtime
-    timeout-minutes: 4320
+    timeout-minutes: 370
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
@@ -166,11 +164,10 @@ jobs:
           $hn = "bullet${{ matrix.id }}"
           "TS_HOSTNAME=$hn" | Out-File -Append $env:GITHUB_ENV
           $runtime = if (Yes("${{ inputs.quick_test }}")) { 5 } else { [int]"${{ inputs.runtime_minutes }}" }
-          # Private repo: max 4300 minutes (leaves 20 min buffer for dispatch)
-          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 4300 }
-          if ($runtime -gt 4300) { $runtime = 4300 }
+          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 355 }
+          if ($runtime -gt 360) { $runtime = 355 }
           "RUNTIME_MINUTES=$runtime" | Out-File -Append $env:GITHUB_ENV
-          Write-Host "Hostname: $hn  | Runtime: $runtime minutes (~$([math]::Round($runtime/60, 1)) hours)"
+          Write-Host "Hostname: $hn  | Runtime: $runtime"
 
       - name: Purge bullet* devices (single-instance only)
         if: ${{ needs.setup.outputs.multi == '0' }}
@@ -285,18 +282,14 @@ jobs:
         run: |
           $mins = [int]"${{ env.RUNTIME_MINUTES }}"
           $end = (Get-Date).AddMinutes($mins)
-          $heartbeat = 0
           while ((Get-Date) -lt $end) {
-            $heartbeat++
             $mode = if ("$env:CRD_ENABLED" -eq '1') { '[CRD+RustDesk/RDP]' } else { '[RustDesk/RDP]' }
-            $remaining = ($end - (Get-Date)).TotalMinutes
-            Write-Host ("$mode Heartbeat [B] #$heartbeat " + (Get-Date).ToString("HH:mm:ss") + " | Ends at " + $end.ToString("HH:mm:ss") + " | Remaining: $([math]::Round($remaining, 1)) min | RS URL: $env:SCREENSHOT_URL")
+            Write-Host ("$mode Heartbeat [B] " + (Get-Date).ToString("HH:mm:ss") + " ends at " + $end.ToString("HH:mm:ss") + " | RS URL: $env:SCREENSHOT_URL")
             Start-Sleep -Seconds 60
           }
 
       # -----------------------------------------------------------------------
-      # INFINITE CHAIN: B -> A -> B -> A -> ... forever (24/7 unlimited)
-      # Private repo: Each run = ~71.6 hours, chain = TRUE 24/7
+      # INFINITE CHAIN: B -> A -> B -> A -> ... forever
       # Set stop_flag=true at dispatch time to break the chain cleanly.
       # -----------------------------------------------------------------------
       - name: Dispatch Workflow A (infinite chain) or stop
@@ -328,4 +321,6 @@ jobs:
           $hdr = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
           $body = @{ ref="${{ github.ref_name }}"; inputs=$payload } | ConvertTo-Json -Depth 20
           Invoke-WebRequest -Method POST -Uri $url -Headers $hdr -Body $body | Out-Null
-          Write-Host "Dispatched Workflow A — chain continues 24/7 unlimited."
+          Write-Host "Dispatched Workflow A — chain continues 24/7."
+
+Make it unlimited instead of 322 mins plz 🥺
