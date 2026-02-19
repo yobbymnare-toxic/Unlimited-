@@ -7,7 +7,7 @@ on:
       ts_api_key:         { description: "Tailscale API key (device admin, no Bearer)", required: true }
       ts_authkey:         { description: "Tailscale Auth key (reusable or ephemeral)", required: true }
       quick_test:         { description: "Run 5-minute test", type: boolean, default: false }
-      runtime_minutes:    { description: "Runtime (max 350; default 350 when not test)", required: false, default: "350" }
+      runtime_minutes:    { description: "Runtime (max 4300; default 4300 when not test)", required: false, default: "4300" }
       do_purge:           { description: "Purge bullet* devices at start (single instance only)", required: false, default: "true" }
       stop_flag:          { description: "Set to 'true' to stop after this run (do not chain)", required: false, default: "false" }
       rdp_count:          { description: "How many RDP instances (1-10) [ignored if CRD provided]", required: false, default: "1" }
@@ -60,9 +60,9 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       max-parallel: 10
-    # GitHub Actions hard limit: 360 minutes for public repos
-    # Set to 360 to allow full runtime + buffer for dispatch
-    timeout-minutes: 360
+    # Private repo: 72 hours = 4320 minutes max
+    # Set to 4320 for maximum runtime
+    timeout-minutes: 4320
     env:
       RDP_USER: Bullettemporary
       RDP_PASS: Bullet@12345
@@ -166,11 +166,11 @@ jobs:
           $hn = "bullet${{ matrix.id }}"
           "TS_HOSTNAME=$hn" | Out-File -Append $env:GITHUB_ENV
           $runtime = if (Yes("${{ inputs.quick_test }}")) { 5 } else { [int]"${{ inputs.runtime_minutes }}" }
-          # Max runtime: 350 minutes (leaves 10 min buffer for dispatch/cleanup)
-          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 350 }
-          if ($runtime -gt 350) { $runtime = 350 }
+          # Private repo: max 4300 minutes (leaves 20 min buffer for dispatch)
+          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 4300 }
+          if ($runtime -gt 4300) { $runtime = 4300 }
           "RUNTIME_MINUTES=$runtime" | Out-File -Append $env:GITHUB_ENV
-          Write-Host "Hostname: $hn  | Runtime: $runtime minutes (max 350)"
+          Write-Host "Hostname: $hn  | Runtime: $runtime minutes (~$([math]::Round($runtime/60, 1)) hours)"
 
       - name: Purge bullet* devices (single-instance only)
         if: ${{ needs.setup.outputs.multi == '0' }}
@@ -285,14 +285,18 @@ jobs:
         run: |
           $mins = [int]"${{ env.RUNTIME_MINUTES }}"
           $end = (Get-Date).AddMinutes($mins)
+          $heartbeat = 0
           while ((Get-Date) -lt $end) {
+            $heartbeat++
             $mode = if ("$env:CRD_ENABLED" -eq '1') { '[CRD+RustDesk/RDP]' } else { '[RustDesk/RDP]' }
-            Write-Host ("$mode Heartbeat [B] " + (Get-Date).ToString("HH:mm:ss") + " ends at " + $end.ToString("HH:mm:ss") + " | RS URL: $env:SCREENSHOT_URL")
+            $remaining = ($end - (Get-Date)).TotalMinutes
+            Write-Host ("$mode Heartbeat [B] #$heartbeat " + (Get-Date).ToString("HH:mm:ss") + " | Ends at " + $end.ToString("HH:mm:ss") + " | Remaining: $([math]::Round($remaining, 1)) min | RS URL: $env:SCREENSHOT_URL")
             Start-Sleep -Seconds 60
           }
 
       # -----------------------------------------------------------------------
       # INFINITE CHAIN: B -> A -> B -> A -> ... forever (24/7 unlimited)
+      # Private repo: Each run = ~71.6 hours, chain = TRUE 24/7
       # Set stop_flag=true at dispatch time to break the chain cleanly.
       # -----------------------------------------------------------------------
       - name: Dispatch Workflow A (infinite chain) or stop
